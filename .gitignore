@@ -1,0 +1,16 @@
+.DS_Store
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Local secrets and generated outputs
+.env
+.env.*
+logs/
+output/
