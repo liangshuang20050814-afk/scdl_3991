@@ -35,7 +35,7 @@ def main(args):
                 path = f"{dataset}/{args.model}/{args.timestamp}"
             
         
-        for fold_path in glob(f"{path}/*"):
+        for fold_path in glob(f"{path}/fold*"):
             if not os.path.exists(f"{fold_path}/eval/metrics.csv"):
                 fold = fold_path.split('/')[-1]
                 print(f"No metrics.csv found in {fold} of {dataset_name}")
@@ -80,4 +80,3 @@ if __name__ == '__main__':
     args = argparser.parse_args()
     
     main(args)
-    
