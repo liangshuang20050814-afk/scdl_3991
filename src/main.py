@@ -38,6 +38,17 @@ def get_parse():
     parser.add_argument('--fold', type=int, default=0, help='Fold number for cross-validation')
     parser.add_argument('--ckpt_path', type=str, help='Path to the checkpoint file for model weights')
     parser.add_argument('--timestamp', type=str, default=None, help='timestamp name for the loggers')
+    parser.add_argument('--selection_seed', type=int, default=None,
+                        help='Override the random neighbor selection seed')
+    parser.add_argument(
+        '--selector_ckpt_path',
+        type=str,
+        default=None,
+        help=(
+            'Soft-selector checkpoint used by attention_twostage20. '
+            'May be a file, directory, glob, or contain {fold}.'
+        ),
+    )
 
     args = parser.parse_args()
     
@@ -166,6 +177,10 @@ if __name__ == '__main__':
     
     config_path = os.path.join('./config', f'{args.config_name}.yaml')
     cfg = load_config_with_default(config_path)
+    if args.selection_seed is not None:
+        cfg.DATA.selection_seed = args.selection_seed
+    if args.selector_ckpt_path is not None:
+        cfg.MODEL.selector_ckpt_path = args.selector_ckpt_path
         
     log_path = cfg.GENERAL.log_path
     Path(log_path).mkdir(exist_ok=True, parents=True)
@@ -191,6 +206,10 @@ if __name__ == '__main__':
         
         config_path = f"{log_path}/{log_name}/{version_name}/{timestamp}/config.yaml"
         cfg = load_config(config_path)        
+        if args.selection_seed is not None:
+            cfg.DATA.selection_seed = args.selection_seed
+        if args.selector_ckpt_path is not None:
+            cfg.MODEL.selector_ckpt_path = args.selector_ckpt_path
         cfg.GENERAL.timestamp = timestamp
         
     cfg.config = args.config_name

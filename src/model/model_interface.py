@@ -2,6 +2,7 @@
 import os
 import inspect
 import importlib
+from glob import glob
 
 #---->
 import numpy as np
@@ -80,6 +81,8 @@ class  ModelInterface(pl.LightningModule):
             inputs['label'] = inputs['label'].squeeze(0)
         if 'mask' in inputs and len(inputs['mask'].shape) == 3:
             inputs['mask'] = inputs['mask'].squeeze(0)
+        if 'neighbor_pool_mask' in inputs and len(inputs['neighbor_pool_mask'].shape) == 3:
+            inputs['neighbor_pool_mask'] = inputs['neighbor_pool_mask'].squeeze(0)
         if 'neighbor_emb' in inputs and len(inputs['neighbor_emb'].shape) == 4:
             inputs['neighbor_emb'] = inputs['neighbor_emb'].squeeze(0)
         if 'position' in inputs and len(inputs['position'].shape) == 3:
@@ -116,6 +119,9 @@ class  ModelInterface(pl.LightningModule):
         #---->Loss
         loss = results_dict['loss']        
         self.log("train_loss", loss)
+        selector_budget_loss = results_dict.get('selector_budget_loss')
+        if selector_budget_loss is not None:
+            self.log("train_selector_budget_loss", selector_budget_loss)
         
         return {'loss': loss} 
     
@@ -290,6 +296,39 @@ class  ModelInterface(pl.LightningModule):
         for arg in class_args:
             if arg in inkeys:
                 args1[arg] = getattr(self.model_config, arg)
+        if args1.get('selector_ckpt_path'):
+            args1['selector_ckpt_path'] = self._resolve_selector_checkpoint(
+                args1['selector_ckpt_path']
+            )
         args1.update(other_args)
         return Model(**args1)
+
+    def _resolve_selector_checkpoint(self, checkpoint_spec):
+        """Resolve a per-fold selector checkpoint path or glob pattern."""
+        fold = int(self.config.DATA.fold)
+        checkpoint_spec = str(checkpoint_spec).replace('{fold}', str(fold))
+
+        if os.path.isfile(checkpoint_spec):
+            return checkpoint_spec
+
+        if os.path.isdir(checkpoint_spec):
+            fold_dir = os.path.join(checkpoint_spec, f'fold{fold}')
+            search_dir = fold_dir if os.path.isdir(fold_dir) else checkpoint_spec
+            candidates = glob(os.path.join(search_dir, '*.ckpt'))
+        else:
+            candidates = glob(checkpoint_spec)
+
+        candidates = [
+            path for path in candidates
+            if os.path.isfile(path) and os.path.basename(path) != 'last.ckpt'
+        ]
+        if not candidates:
+            raise FileNotFoundError(
+                "No selector checkpoint matched "
+                f"'{checkpoint_spec}' for fold {fold}"
+            )
+
+        selected = max(candidates, key=os.path.getmtime)
+        print(f"Using selector checkpoint for fold {fold}: {selected}")
+        return selected
     

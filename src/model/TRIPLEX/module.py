@@ -92,7 +92,9 @@ class MultiHeadAttention(nn.Module):
             else:
                 self.ab = self.attention_biases[:, self.attention_bias_idxs]
         
-    def forward(self, x, mask = None, return_attn=False):
+    def forward(self, x, mask = None, gate=None, return_attn=False):
+        if gate is not None and self.flash_attn:
+            raise ValueError("Selector gates are not supported by the flash-attention path.")
         
         qkv = self.to_qkv(x) # b x n x d*3
         
@@ -116,6 +118,12 @@ class MultiHeadAttention(nn.Module):
                 qk[:,:,-ind_mask:,-ind_mask:] = qk[:,:,-ind_mask:,-ind_mask:].masked_fill(mask==0, fill_value)
 
             attn_weights = self.attend(qk) # b h n n
+            if gate is not None:
+                gate = gate.to(device=attn_weights.device, dtype=attn_weights.dtype)
+                attn_weights = attn_weights * gate
+                attn_weights = attn_weights / attn_weights.sum(
+                    dim=-1, keepdim=True
+                ).clamp_min(torch.finfo(attn_weights.dtype).tiny)
             if return_attn:
                 attn_weights_averaged = attn_weights.mean(dim=1)
             
@@ -152,7 +160,9 @@ class MultiHeadCrossAttention(nn.Module):
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
         
-    def forward(self, x_q, x_kv, mask = None, return_attn=False):
+    def forward(self, x_q, x_kv, mask = None, gate=None, return_attn=False):
+        if gate is not None and self.flash_attn:
+            raise ValueError("Selector gates are not supported by the flash-attention path.")
         q = self.to_q(x_q)
         kv = self.to_kv(x_kv).chunk(2, dim = -1) 
         
@@ -175,6 +185,12 @@ class MultiHeadCrossAttention(nn.Module):
                 qk[:,:,-ind_mask:,-ind_mask:] = qk[:,:,-ind_mask:,-ind_mask:].masked_fill(mask==0, fill_value)
 
             attn_weights = self.attend(qk) # b h n n
+            if gate is not None:
+                gate = gate.to(device=attn_weights.device, dtype=attn_weights.dtype)
+                attn_weights = attn_weights * gate
+                attn_weights = attn_weights / attn_weights.sum(
+                    dim=-1, keepdim=True
+                ).clamp_min(torch.finfo(attn_weights.dtype).tiny)
             if return_attn:
                 attn_weights_averaged = attn_weights.mean(dim=1)
             
@@ -268,15 +284,17 @@ class TransformerEncoder(nn.Module):
                                                     resolution=resolution, flash_attn=flash_attn)),
                 PreNorm(emb_dim, FeedForward(emb_dim, mlp_dim, dropout = dropout))
             ]))
-    def forward(self, x, mask=None, return_attn=False):
+    def forward(self, x, mask=None, gate=None, return_attn=False):
         for attn, ff in self.layers:
             if return_attn:
-                attn_out, attn_weights = attn(x, mask=mask, return_attn=return_attn)
+                attn_out, attn_weights = attn(
+                    x, mask=mask, gate=gate, return_attn=return_attn
+                )
                 x += attn_out # residual connection after attention      
                 x = ff(x) + x # residual connection after feed forward net
                 
             else:
-                x = attn(x, mask=mask) + x # residual connection after attention      
+                x = attn(x, mask=mask, gate=gate) + x # residual connection after attention
                 x = ff(x) + x # residual connection after feed forward net
             
         if return_attn:
@@ -294,14 +312,17 @@ class CrossEncoder(nn.Module):
                 PreNorm(emb_dim, MultiHeadCrossAttention(emb_dim, heads = heads, dropout = dropout)),
                 PreNorm(emb_dim, FeedForward(emb_dim, mlp_dim, dropout = dropout))
             ]))
-    def forward(self, x_q, x_kv, mask=None, return_attn=False):
+    def forward(self, x_q, x_kv, mask=None, gate=None, return_attn=False):
         for attn, ff in self.layers:
             if return_attn:
-                attn_out, attn_weights = attn(x_q, x_kv=x_kv, mask=mask, return_attn=return_attn)
+                attn_out, attn_weights = attn(
+                    x_q, x_kv=x_kv, mask=mask, gate=gate,
+                    return_attn=return_attn
+                )
                 x_q += attn_out # residual connection after attention      
                 x_q = ff(x_q) + x_q # residual connection after feed forward net
             else:
-                x_q = attn(x_q, x_kv=x_kv, mask=mask) + x_q
+                x_q = attn(x_q, x_kv=x_kv, mask=mask, gate=gate) + x_q
                 x_q = ff(x_q) + x_q # residual connection after feed forward net
 
         if return_attn:
@@ -529,13 +550,15 @@ class NeighborEncoder(nn.Module):
         self.layer = TransformerEncoder(emb_dim, depth, heads, mlp_dim, dropout, attn_bias=True, resolution=resolution)
         self.norm = nn.LayerNorm(emb_dim)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, gate=None):
         
         if mask != None:
             mask = mask.unsqueeze(1).unsqueeze(1)
+        if gate is not None:
+            gate = gate.unsqueeze(1).unsqueeze(1)
             
         # Translayer
-        x = self.layer(x, mask=mask) #[B, N, 512]
+        x = self.layer(x, mask=mask, gate=gate) #[B, N, 512]
         x = self.norm(x)
         
         return x
@@ -548,16 +571,18 @@ class FusionEncoder(nn.Module):
         self.fusion_layer = CrossEncoder(emb_dim, depth, heads, mlp_dim, dropout)
         self.norm = nn.LayerNorm(emb_dim)
 
-    def forward(self, x_t=None, x_n=None, x_g=None, mask=None):
+    def forward(self, x_t=None, x_n=None, x_g=None, mask=None, gate=None):
             
         if mask != None:
             mask = mask.unsqueeze(1).unsqueeze(1)
+        if gate is not None:
+            gate = gate.unsqueeze(1).unsqueeze(1)
             
         # Target token
         fus1 = self.fusion_layer(x_g.unsqueeze(1), x_t) 
             
         # Neighbor token
-        fus2 = self.fusion_layer(x_g.unsqueeze(1), x_n, mask=mask) 
+        fus2 = self.fusion_layer(x_g.unsqueeze(1), x_n, mask=mask, gate=gate)
                 
         fusion = (fus1 + fus2).squeeze(1)            
         fusion = self.norm(fusion)

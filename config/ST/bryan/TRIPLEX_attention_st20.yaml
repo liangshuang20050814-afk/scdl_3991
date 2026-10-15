@@ -1,0 +1,31 @@
+MODEL:
+  model_name: TRIPLEX
+  emb_dim: 512
+  depth1: 3
+  depth2: 3
+  depth3: 4
+  num_heads1: 16
+  num_heads2: 8
+  num_heads3: 8
+  mlp_ratio1: 4
+  mlp_ratio2: 2
+  mlp_ratio3: 4
+  dropout1: 0.4
+  dropout2: 0.1
+  dropout3: 0.3
+  kernel_size: 3
+  pos_layer: 'APEG'
+  selector_mode: straight_through
+  selector_dim: 64
+  selector_temperature: 1.0
+  selector_budget_loss_weight: 0.0
+  selector_use_similarity_prior: false
+  selector_similarity_prior_weight: 1.0
+  selector_learned_score_weight: 1.0
+  num_selected_patches: 20
+
+DATA:
+  dataset_name: TriDataset
+  neighbor_selection: attention_st20
+  num_selected_patches: 20
+

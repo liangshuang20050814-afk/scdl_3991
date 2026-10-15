@@ -1,15 +1,28 @@
 
+import hashlib
 import os
 
 import numpy as np
 from scipy import sparse
 import h5py
 import torch
+import torch.nn.functional as F
 
 from dataset.base_dataset import STDataset
 
 
 class TriDataset(STDataset):
+    STATIC_SELECTION_METHODS = {
+        'random20',
+        'similarity20',
+        'diversity20',
+    }
+    MODEL_SELECTION_METHODS = {
+        'attention_soft',
+        'attention_st20',
+        'attention_twostage20',
+    }
+
     def __init__(self, 
                 mode: str,
                 phase: str,
@@ -22,7 +35,10 @@ class TriDataset(STDataset):
                 cpm: bool = False,
                 smooth: bool = False,
                 data_id: str = None,
-                model_name: str = 'uni_v1'
+                model_name: str = 'uni_v1',
+                neighbor_selection: str = 'all',
+                num_selected_patches: int = 20,
+                selection_seed: int = 2021
                 ):
         super(TriDataset, self).__init__(
                                 mode=mode,
@@ -37,7 +53,27 @@ class TriDataset(STDataset):
                                 smooth=smooth,
                                 data_id=data_id)
     
+        valid_selection_methods = [
+            'all',
+            'random20',
+            'similarity20',
+            'diversity20',
+            'attention_soft',
+            'attention_st20',
+            'attention_twostage20',
+        ]
+        if neighbor_selection not in valid_selection_methods:
+            raise ValueError(
+                f"neighbor_selection must be one of {valid_selection_methods}, "
+                f"but got {neighbor_selection}"
+            )
+        if num_selected_patches < 1:
+            raise ValueError("num_selected_patches must be at least 1")
+
         self.emb_dir = f"{data_dir}/emb"
+        self.neighbor_selection = neighbor_selection
+        self.num_selected_patches = num_selected_patches
+        self.selection_seed = selection_seed
         
         if phase == 'train':
             
@@ -68,6 +104,7 @@ class TriDataset(STDataset):
             img = self.transforms(img)
             
             neighbor_emb, mask = self.load_emb(name, emb_name='neighbor', idx=idx)
+            mask = self.select_neighbor_mask(neighbor_emb, mask, name, idx)
             adata = self.adata_dict[name]
             expression = adata[idx].X
             expression = expression.toarray().squeeze(0) \
@@ -76,6 +113,8 @@ class TriDataset(STDataset):
                 
             data['img'] = img
             data['mask'] = mask
+            if self.neighbor_selection in self.STATIC_SELECTION_METHODS:
+                data['neighbor_pool_mask'] = mask.clone()
             data['neighbor_emb'] = neighbor_emb
             data['label'] = torch.FloatTensor(expression)
             data['pid'] = torch.LongTensor([i])
@@ -86,6 +125,12 @@ class TriDataset(STDataset):
                 img = self.img[index]
                 img = self.transforms(img)
                 neighbor_emb, mask = self.load_emb(self.name, emb_name='neighbor', idx=index)
+                mask = self.select_neighbor_mask(
+                    neighbor_emb,
+                    mask,
+                    self.name,
+                    index,
+                )
                 # global_emb = self.load_emb(self.name, emb_name='global')
                 # pos = np.load(f"{self.data_dir}/pos/{self.name}.npy")
                 data['sid'] = torch.LongTensor([index])
@@ -95,6 +140,12 @@ class TriDataset(STDataset):
                 img = torch.stack([self.transforms(im) for im in img], dim=0)
                 
                 neighbor_emb, mask = self.load_emb(name, emb_name='neighbor')
+                mask = self.select_neighbor_mask(
+                    neighbor_emb,
+                    mask,
+                    name,
+                    torch.arange(mask.shape[0]),
+                )
                 global_emb, pos = self.load_emb(name, emb_name='global', return_crds=True)
             
                 if os.path.isfile(f"{self.st_dir}/{name}.h5ad"):
@@ -109,9 +160,196 @@ class TriDataset(STDataset):
             
             data['img'] = img
             data['mask'] = mask
+            if self.neighbor_selection in self.STATIC_SELECTION_METHODS:
+                data['neighbor_pool_mask'] = mask.clone()
             data['neighbor_emb'] = neighbor_emb
             
         return data
+
+    def select_neighbor_mask(
+            self,
+            neighbor_emb,
+            mask,
+            slide_id,
+            spot_indices):
+        """Select a subset of valid neighbor patches.
+
+        All selection methods retain the center target patch and choose at most
+        ``num_selected_patches - 1`` valid context patches. Random-20 uses a
+        stable per-spot seed, Similarity-20 ranks candidates by cosine
+        similarity to the center, and Diversity-20 applies center-initialized
+        k-center greedy selection with cosine distance.
+        """
+        if (
+            self.neighbor_selection == 'all'
+            or self.neighbor_selection in self.MODEL_SELECTION_METHODS
+        ):
+            return mask
+
+        squeeze_output = mask.ndim == 1
+        masks = mask.unsqueeze(0) if squeeze_output else mask
+        embeddings = (
+            neighbor_emb.unsqueeze(0)
+            if neighbor_emb.ndim == 2
+            else neighbor_emb
+        )
+
+        if masks.ndim != 2:
+            raise ValueError("mask must have shape [N] or [B, N]")
+        if embeddings.ndim != 3:
+            raise ValueError(
+                "neighbor_emb must have shape [N, D] or [B, N, D]"
+            )
+        if embeddings.shape[:2] != masks.shape:
+            raise ValueError(
+                "neighbor_emb and mask must have matching batch and token "
+                f"dimensions, got {tuple(embeddings.shape)} and "
+                f"{tuple(masks.shape)}"
+            )
+
+        if isinstance(spot_indices, int):
+            indices = [spot_indices]
+        elif torch.is_tensor(spot_indices):
+            indices = spot_indices.detach().cpu().view(-1).tolist()
+        else:
+            indices = list(spot_indices)
+
+        if len(indices) != masks.shape[0]:
+            raise ValueError(
+                "spot_indices must contain one index for each neighbor mask"
+            )
+
+        selected_masks = torch.zeros_like(masks)
+        num_tokens = masks.shape[-1]
+        center_idx = num_tokens // 2
+        num_context_patches = min(
+            self.num_selected_patches - 1,
+            num_tokens - 1,
+        )
+
+        for row, spot_idx in enumerate(indices):
+            valid = masks[row].bool()
+
+            # The center is the target patch and is never removed.
+            if not valid[center_idx]:
+                raise ValueError(
+                    f"Center patch is invalid for slide {slide_id}, spot {spot_idx}"
+                )
+            selected_masks[row, center_idx] = 1
+
+            candidate_mask = valid.clone()
+            candidate_mask[center_idx] = False
+            candidates = torch.nonzero(candidate_mask, as_tuple=False).flatten()
+            num_to_select = min(num_context_patches, candidates.numel())
+
+            if num_to_select == 0:
+                continue
+
+            if num_to_select == candidates.numel():
+                chosen = candidates
+            elif self.neighbor_selection == 'random20':
+                chosen = self._select_random_candidates(
+                    candidates,
+                    num_to_select,
+                    slide_id,
+                    spot_idx,
+                )
+            elif self.neighbor_selection == 'similarity20':
+                chosen = self._select_similar_candidates(
+                    embeddings[row],
+                    candidates,
+                    center_idx,
+                    num_to_select,
+                )
+            elif self.neighbor_selection == 'diversity20':
+                chosen = self._select_diverse_candidates(
+                    embeddings[row],
+                    candidates,
+                    center_idx,
+                    num_to_select,
+                )
+            else:
+                raise RuntimeError(
+                    f"Unsupported neighbor selection method: "
+                    f"{self.neighbor_selection}"
+                )
+
+            selected_masks[row, chosen] = 1
+
+        return selected_masks.squeeze(0) if squeeze_output else selected_masks
+
+    def _select_random_candidates(
+            self,
+            candidates,
+            num_to_select,
+            slide_id,
+            spot_idx):
+        seed_material = f"{self.selection_seed}:{slide_id}:{int(spot_idx)}"
+        digest = hashlib.sha256(seed_material.encode('utf-8')).digest()
+        spot_seed = int.from_bytes(digest[:8], byteorder='little')
+        spot_seed %= (2**63 - 1)
+
+        generator = torch.Generator(device='cpu')
+        generator.manual_seed(spot_seed)
+        order = torch.randperm(candidates.numel(), generator=generator)
+        return candidates[order[:num_to_select]]
+
+    @staticmethod
+    def _select_similar_candidates(
+            embeddings,
+            candidates,
+            center_idx,
+            num_to_select):
+        """Return candidates most cosine-similar to the center patch."""
+        normalized = F.normalize(embeddings.float(), p=2, dim=-1)
+        similarities = normalized[candidates] @ normalized[center_idx]
+
+        # Candidates are in ascending token-index order. Stable sorting makes
+        # token index the deterministic tie-breaker for equal similarities.
+        order = torch.argsort(similarities, descending=True, stable=True)
+        return candidates[order[:num_to_select]]
+
+    @staticmethod
+    def _select_diverse_candidates(
+            embeddings,
+            candidates,
+            center_idx,
+            num_to_select):
+        """Apply center-initialized k-center greedy with cosine distance."""
+        normalized = F.normalize(embeddings.float(), p=2, dim=-1)
+        remaining = candidates.clone()
+
+        similarities_to_center = normalized[remaining] @ normalized[center_idx]
+        min_distances = 1.0 - similarities_to_center.clamp(-1.0, 1.0)
+        chosen = []
+
+        for _ in range(num_to_select):
+            # torch.argmax returns the first maximum. Because ``remaining`` is
+            # ordered by token index, equal distances have a stable tie-break.
+            best_position = torch.argmax(min_distances)
+            chosen_idx = remaining[best_position]
+            chosen.append(chosen_idx)
+
+            keep = torch.ones(
+                remaining.numel(),
+                dtype=torch.bool,
+                device=remaining.device,
+            )
+            keep[best_position] = False
+            remaining = remaining[keep]
+            min_distances = min_distances[keep]
+
+            if remaining.numel() == 0:
+                break
+
+            similarities_to_chosen = normalized[remaining] @ normalized[chosen_idx]
+            distances_to_chosen = 1.0 - similarities_to_chosen.clamp(-1.0, 1.0)
+            min_distances = torch.minimum(
+                min_distances,
+                distances_to_chosen,
+            )
+
+        return torch.stack(chosen)
         
     def load_emb(self, name: str, emb_name: str = 'global', idx: int = None, model_name: str = 'uni_v1', return_crds=False):
         if emb_name not in ['global', 'neighbor']:

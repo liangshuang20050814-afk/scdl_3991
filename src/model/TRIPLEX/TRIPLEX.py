@@ -17,6 +17,11 @@ from einops import rearrange
 from model.TRIPLEX.module import ( GlobalEncoder, 
                                 NeighborEncoder, 
                                 FusionEncoder )
+from model.TRIPLEX.selector import (
+    TargetConditionedSelector,
+    freeze_selector,
+    load_selector_state,
+)
 
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -79,7 +84,16 @@ class TRIPLEX(nn.Module):
                 kernel_size=3,
                 res_neighbor=(5,5),
                 pos_layer='APEG',
-                max_batch_size=1024):
+                max_batch_size=1024,
+                selector_mode='none',
+                selector_dim=64,
+                selector_temperature=1.0,
+                selector_budget_loss_weight=0.0,
+                selector_use_similarity_prior=False,
+                selector_similarity_prior_weight=1.0,
+                selector_learned_score_weight=1.0,
+                num_selected_patches=20,
+                selector_ckpt_path=None):
         """TRIPLEX model 
 
         Args:
@@ -107,6 +121,37 @@ class TRIPLEX(nn.Module):
         self.alpha = 0.3
         self.emb_dim = emb_dim
         self.max_batch_size = max_batch_size
+        self.selector_mode = selector_mode
+        self.selector_budget_loss_weight = selector_budget_loss_weight
+
+        valid_selector_modes = {
+            'none', 'soft', 'straight_through', 'frozen_hard'
+        }
+        if selector_mode not in valid_selector_modes:
+            raise ValueError(
+                f"selector_mode must be one of {sorted(valid_selector_modes)}, "
+                f"but got {selector_mode}"
+            )
+
+        self.neighbor_selector = None
+        if selector_mode != 'none':
+            self.neighbor_selector = TargetConditionedSelector(
+                emb_dim=emb_dim,
+                selector_dim=selector_dim,
+                num_selected_patches=num_selected_patches,
+                temperature=selector_temperature,
+                use_similarity_prior=selector_use_similarity_prior,
+                similarity_prior_weight=selector_similarity_prior_weight,
+                learned_score_weight=selector_learned_score_weight,
+            )
+            if selector_mode == 'frozen_hard':
+                if not selector_ckpt_path:
+                    raise ValueError(
+                        "selector_ckpt_path is required when "
+                        "selector_mode='frozen_hard'"
+                    )
+                load_selector_state(self.neighbor_selector, selector_ckpt_path)
+                freeze_selector(self.neighbor_selector)
     
         # Target Encoder
         resnet18 = load_model_weights("tenpercent_resnet18.ckpt")
@@ -152,21 +197,63 @@ class TRIPLEX(nn.Module):
                 global_emb=None, 
                 pid=None, 
                 sid=None, 
+                neighbor_pool_mask=None,
                 **kwargs):
         
         if 'dataset' in kwargs:
             # Training
-            return self._process_training_batch(img, mask, neighbor_emb, pid, sid, kwargs['dataset'], kwargs['label'])
+            return self._process_training_batch(
+                img,
+                mask,
+                neighbor_emb,
+                pid,
+                sid,
+                kwargs['dataset'],
+                kwargs['label'],
+                neighbor_pool_mask,
+            )
         else:
             # Inference 
             return self._process_inference_batch(img, mask, neighbor_emb, position, global_emb, sid)
             
-    def _process_training_batch(self, img, mask, neighbor_emb, pid, sid, dataset, label):
+    def _process_training_batch(
+            self,
+            img,
+            mask,
+            neighbor_emb,
+            pid,
+            sid,
+            dataset,
+            label,
+            neighbor_pool_mask=None):
         global_emb, position = self.retrieve_global_emb(pid, dataset)
         
-        fusion_token, target_token, neighbor_token, global_token = \
-            self._encode_all(img, mask, neighbor_emb, position, global_emb, pid, sid)
-        return self._get_outputs(fusion_token, target_token, neighbor_token, global_token, label)
+        (
+            fusion_token,
+            target_token,
+            neighbor_token,
+            global_token,
+            effective_pool_mask,
+            selector_budget_loss,
+        ) = self._encode_all(
+            img,
+            mask,
+            neighbor_emb,
+            position,
+            global_emb,
+            pid,
+            sid,
+            neighbor_pool_mask,
+        )
+        return self._get_outputs(
+            fusion_token,
+            target_token,
+            neighbor_token,
+            global_token,
+            label,
+            effective_pool_mask,
+            selector_budget_loss,
+        )
 
     def _process_inference_batch(self, img, mask, neighbor_emb, position, global_emb, sid=None):
         if sid is None and img.shape[0] > self.max_batch_size:
@@ -182,18 +269,60 @@ class TRIPLEX(nn.Module):
             
             return {'logits': pred}    
         else:
-            fusion_token, _, _, _ = self._encode_all(img, mask, neighbor_emb, position, global_emb, sid=sid)
+            fusion_token, _, _, _, _, _ = self._encode_all(
+                img, mask, neighbor_emb, position, global_emb, sid=sid
+            )
             pred = torch.clamp(self.fc(fusion_token), 0)
         return {'logits': pred}
     
-    def _encode_all(self, img, mask, neighbor_emb, position, global_emb, pid=None, sid=None):
+    def _encode_all(
+            self,
+            img,
+            mask,
+            neighbor_emb,
+            position,
+            global_emb,
+            pid=None,
+            sid=None,
+            neighbor_pool_mask=None):
+        selector_gate = None
+        selector_budget_loss = neighbor_emb.sum() * 0.0
+        effective_pool_mask = neighbor_pool_mask
+
+        if self.neighbor_selector is not None:
+            selector_result = self.neighbor_selector(
+                neighbor_emb,
+                mask,
+                self.selector_mode,
+            )
+            selector_gate = selector_result['gate']
+            selector_budget_loss = selector_result['budget_loss']
+            effective_pool_mask = selector_gate
+
         target_token = self.encode_target(img)
-        neighbor_token = self.neighbor_encoder(neighbor_emb, mask)
+        neighbor_token = self.neighbor_encoder(
+            neighbor_emb,
+            mask,
+            gate=selector_gate,
+        )
         global_token = self.encode_global(global_emb, position, pid, sid)
         
-        fusion_token = self.fusion_encoder(target_token, neighbor_token, global_token, mask=mask)
+        fusion_token = self.fusion_encoder(
+            target_token,
+            neighbor_token,
+            global_token,
+            mask=mask,
+            gate=selector_gate,
+        )
         
-        return fusion_token, target_token, neighbor_token, global_token
+        return (
+            fusion_token,
+            target_token,
+            neighbor_token,
+            global_token,
+            effective_pool_mask,
+            selector_budget_loss,
+        )
     
     def encode_target(self, img):
         # Target tokens
@@ -221,17 +350,51 @@ class TRIPLEX(nn.Module):
                 
         return global_token
         
-    def _get_outputs(self, fusion_token, target_token, neighbor_token, global_token, label):
+    def _get_outputs(
+            self,
+            fusion_token,
+            target_token,
+            neighbor_token,
+            global_token,
+            label,
+            neighbor_pool_mask=None,
+            selector_budget_loss=None):
         output = torch.clamp(self.fc(fusion_token), 0) # B x num_genes
         out_target = torch.clamp(self.fc_target(target_token.mean(1)), 0) # B x num_genes
-        out_neighbor = torch.clamp(self.fc_neighbor(neighbor_token.mean(1)), 0) # B x num_genes
+
+        if neighbor_pool_mask is None:
+            # Preserve the original TRIPLEX behavior for the baseline config.
+            neighbor_pooled = neighbor_token.mean(1)
+        else:
+            pool_mask = neighbor_pool_mask.to(
+                device=neighbor_token.device,
+                dtype=neighbor_token.dtype,
+            ).unsqueeze(-1)
+            neighbor_pooled = (neighbor_token * pool_mask).sum(dim=1)
+            neighbor_pooled = neighbor_pooled / pool_mask.sum(dim=1).clamp_min(1.0)
+
+        out_neighbor = torch.clamp(self.fc_neighbor(neighbor_pooled), 0) # B x num_genes
         out_global = torch.clamp(self.fc_global(global_token), 0) # B x num_genes
         
         preds = (output, out_target, out_neighbor, out_global)
         
         loss = self.calculate_loss(preds, label)
+        if selector_budget_loss is not None:
+            loss = loss + (
+                self.selector_budget_loss_weight * selector_budget_loss
+            )
         
-        return {'loss': loss, 'logits': output}
+        return {
+            'loss': loss,
+            'logits': output,
+            'selector_budget_loss': selector_budget_loss,
+        }
+
+    def train(self, mode=True):
+        super().train(mode)
+        if self.selector_mode == 'frozen_hard':
+            self.neighbor_selector.eval()
+        return self
         
     def calculate_loss(self, preds, label):
         
@@ -257,4 +420,3 @@ class TRIPLEX(nn.Module):
             pos[pid] = dataset.pos_dict[_id].clone().to(device)
         
         return global_emb, pos
-    
