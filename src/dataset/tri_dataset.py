@@ -71,6 +71,7 @@ class TriDataset(STDataset):
             raise ValueError("num_selected_patches must be at least 1")
 
         self.emb_dir = f"{data_dir}/emb"
+        self.model_name = model_name
         self.neighbor_selection = neighbor_selection
         self.num_selected_patches = num_selected_patches
         self.selection_seed = selection_seed
@@ -351,9 +352,12 @@ class TriDataset(STDataset):
 
         return torch.stack(chosen)
         
-    def load_emb(self, name: str, emb_name: str = 'global', idx: int = None, model_name: str = 'uni_v1', return_crds=False):
+    def load_emb(self, name: str, emb_name: str = 'global', idx: int = None, model_name: str = None, return_crds=False):
         if emb_name not in ['global', 'neighbor']:
             raise ValueError(f"emb_name must be 'global' or 'neighbor', but got {emb_name}")
+
+        if model_name is None:
+            model_name = self.model_name
         
         path = f"{self.emb_dir}/{emb_name}/{model_name}/{name}.h5"
         
