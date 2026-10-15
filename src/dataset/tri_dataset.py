@@ -208,7 +208,7 @@ class TriDataset(STDataset):
                 f"{tuple(masks.shape)}"
             )
 
-        if isinstance(spot_indices, int):
+        if isinstance(spot_indices, (int, np.integer)):
             indices = [spot_indices]
         elif torch.is_tensor(spot_indices):
             indices = spot_indices.detach().cpu().view(-1).tolist()
