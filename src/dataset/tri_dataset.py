@@ -208,12 +208,7 @@ class TriDataset(STDataset):
                 f"{tuple(masks.shape)}"
             )
 
-        if isinstance(spot_indices, (int, np.integer)):
-            indices = [spot_indices]
-        elif torch.is_tensor(spot_indices):
-            indices = spot_indices.detach().cpu().view(-1).tolist()
-        else:
-            indices = list(spot_indices)
+        indices = self._normalize_spot_indices(spot_indices)
 
         if len(indices) != masks.shape[0]:
             raise ValueError(
@@ -278,6 +273,29 @@ class TriDataset(STDataset):
             selected_masks[row, chosen] = 1
 
         return selected_masks.squeeze(0) if squeeze_output else selected_masks
+
+    @staticmethod
+    def _normalize_spot_indices(spot_indices):
+        """Return spot indices as Python integers for stable selection seeds."""
+        if isinstance(spot_indices, (int, np.integer)):
+            indices = [spot_indices]
+        elif torch.is_tensor(spot_indices):
+            indices = spot_indices.detach().cpu().reshape(-1).tolist()
+        elif isinstance(spot_indices, np.ndarray):
+            indices = spot_indices.reshape(-1).tolist()
+        else:
+            try:
+                indices = list(spot_indices)
+            except TypeError as error:
+                raise TypeError(
+                    "spot_indices must be an integer, tensor, NumPy array, "
+                    "or iterable of integers"
+                ) from error
+
+        try:
+            return [int(index) for index in indices]
+        except (TypeError, ValueError) as error:
+            raise TypeError("spot_indices must contain only integers") from error
 
     def _select_random_candidates(
             self,
