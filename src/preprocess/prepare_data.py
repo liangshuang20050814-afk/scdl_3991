@@ -275,7 +275,8 @@ if __name__ == "__main__":
                 datasets.load_dataset(
                     'MahmoodLab/hest', 
                     cache_dir=output_dir,
-                    patterns=list_patterns
+                    patterns=list_patterns,
+                    trust_remote_code=True,
                 )   
                 
         else:

@@ -92,6 +92,17 @@ class NeighborSelectionTest(unittest.TestCase):
                 embeddings, valid, 'slide', 0
             )
 
+    def test_generic_method_names_support_multiple_budgets(self):
+        embeddings = torch.randn(25, 8)
+        valid = torch.ones(25, dtype=torch.long)
+
+        for method in ('random', 'similarity', 'diversity'):
+            for selected in (5, 10, 15):
+                result = self.make_dataset(
+                    method, seed=7, selected=selected
+                ).select_neighbor_mask(embeddings, valid, 'slide', 3)
+                self.assert_valid_selection(result, valid, selected)
+
     def test_embedding_loader_uses_configured_model_name(self):
         with tempfile.TemporaryDirectory() as directory:
             embedding_root = Path(directory) / 'neighbor' / 'cigar'

@@ -14,3 +14,10 @@ venv/
 .env.*
 logs/
 output/
+cufile.log
+weights/
+
+# Downloaded and generated spatial-transcriptomics data. Keep the small,
+# versioned dataset manifests (ids.csv) in Git.
+input/ST/*/**
+!input/ST/*/ids.csv

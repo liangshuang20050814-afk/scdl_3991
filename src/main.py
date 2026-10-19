@@ -41,6 +41,18 @@ def get_parse():
     parser.add_argument('--selection_seed', type=int, default=None,
                         help='Override the random neighbor selection seed')
     parser.add_argument(
+        '--output_dir_override',
+        type=str,
+        default=None,
+        help='Write evaluation predictions to a separate output root.',
+    )
+    parser.add_argument(
+        '--eval_tag',
+        type=str,
+        default='eval',
+        help='CSV logger subdirectory used for evaluation metrics.',
+    )
+    parser.add_argument(
         '--selector_ckpt_path',
         type=str,
         default=None,
@@ -120,7 +132,7 @@ def main(cfg):
         csv_logger = pl_loggers.CSVLogger(
             save_dir=f"{log_path}/{log_name}",
             name=f"{model_name}/{current_time}",
-            version=f'fold{cfg.DATA.fold}/eval'
+            version=f'fold{cfg.DATA.fold}/{cfg.GENERAL.eval_tag}'
         )
 
         trainer = pl.Trainer(
@@ -215,6 +227,9 @@ if __name__ == '__main__':
     cfg.config = args.config_name
     cfg.GENERAL.exp_id = args.exp_id
     cfg.GENERAL.gpu = args.gpu
+    cfg.GENERAL.eval_tag = args.eval_tag
+    if args.output_dir_override is not None:
+        cfg.DATA.output_dir = args.output_dir_override
     cfg.DATA.mode = args.mode
     
     cfg.MODEL.num_genes = cfg.DATA.num_outputs

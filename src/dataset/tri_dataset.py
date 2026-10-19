@@ -13,13 +13,18 @@ from dataset.base_dataset import STDataset
 
 class TriDataset(STDataset):
     STATIC_SELECTION_METHODS = {
+        'random',
         'random20',
+        'similarity',
         'similarity20',
+        'diversity',
         'diversity20',
     }
     MODEL_SELECTION_METHODS = {
         'attention_soft',
+        'attention_st',
         'attention_st20',
+        'attention_twostage',
         'attention_twostage20',
     }
 
@@ -55,11 +60,16 @@ class TriDataset(STDataset):
     
         valid_selection_methods = [
             'all',
+            'random',
             'random20',
+            'similarity',
             'similarity20',
+            'diversity',
             'diversity20',
             'attention_soft',
+            'attention_st',
             'attention_st20',
+            'attention_twostage',
             'attention_twostage20',
         ]
         if neighbor_selection not in valid_selection_methods:
@@ -176,9 +186,9 @@ class TriDataset(STDataset):
         """Select a subset of valid neighbor patches.
 
         All selection methods retain the center target patch and choose at most
-        ``num_selected_patches - 1`` valid context patches. Random-20 uses a
-        stable per-spot seed, Similarity-20 ranks candidates by cosine
-        similarity to the center, and Diversity-20 applies center-initialized
+        ``num_selected_patches - 1`` valid context patches. Random-K uses a
+        stable per-spot seed, Similarity-K ranks candidates by cosine
+        similarity to the center, and Diversity-K applies center-initialized
         k-center greedy selection with cosine distance.
         """
         if (
@@ -243,21 +253,21 @@ class TriDataset(STDataset):
 
             if num_to_select == candidates.numel():
                 chosen = candidates
-            elif self.neighbor_selection == 'random20':
+            elif self.neighbor_selection in {'random', 'random20'}:
                 chosen = self._select_random_candidates(
                     candidates,
                     num_to_select,
                     slide_id,
                     spot_idx,
                 )
-            elif self.neighbor_selection == 'similarity20':
+            elif self.neighbor_selection in {'similarity', 'similarity20'}:
                 chosen = self._select_similar_candidates(
                     embeddings[row],
                     candidates,
                     center_idx,
                     num_to_select,
                 )
-            elif self.neighbor_selection == 'diversity20':
+            elif self.neighbor_selection in {'diversity', 'diversity20'}:
                 chosen = self._select_diverse_candidates(
                     embeddings[row],
                     candidates,
