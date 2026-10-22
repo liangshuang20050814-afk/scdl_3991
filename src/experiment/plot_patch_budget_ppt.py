@@ -10,7 +10,10 @@ from matplotlib.colors import TwoSlopeNorm
 import numpy as np
 import pandas as pd
 from pptx import Presentation
+from pptx.chart.data import ChartData
 from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE, XL_MARKER_STYLE
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
@@ -379,18 +382,122 @@ def build_powerpoint(images):
     return output
 
 
-def build_single_image_powerpoint(image_path, output_name="01_patch_budget_trends.pptx"):
-    """Place one 16:9 figure on a matching single-slide PowerPoint deck."""
+def build_editable_trends_powerpoint(improvements):
+    """Build the trends slide from native PowerPoint charts and shapes."""
     presentation = Presentation()
     presentation.slide_width = Inches(13.333)
     presentation.slide_height = Inches(7.5)
     slide = presentation.slides.add_slide(presentation.slide_layouts[6])
-    slide.shapes.add_picture(
-        str(image_path), 0, 0,
-        width=presentation.slide_width,
-        height=presentation.slide_height,
+    background = slide.background.fill
+    background.solid()
+    background.fore_color.rgb = RGBColor(255, 255, 255)
+
+    add_textbox(
+        slide, 0.38, 0.16, 12.4, 0.45,
+        "PATCH BUDGET — PERFORMANCE ACROSS K", 22, (23, 33, 43), True,
     )
-    output = OUTPUT_DIR / output_name
+    add_textbox(
+        slide, 0.39, 0.58, 12.0, 0.27,
+        "Change relative to the original TRIPLEX model using 25 patches",
+        10.5, (82, 98, 115),
+    )
+
+    all_values = improvements[[item[0] for item in METRICS]].to_numpy()
+    bound = float(max(5.0, np.ceil(np.max(np.abs(all_values)) + 1)))
+    positions = [
+        (0.35, 1.28), (4.66, 1.28), (8.97, 1.28),
+        (0.35, 4.27), (4.66, 4.27),
+    ]
+    title_positions = [
+        (0.35, 0.89), (4.66, 0.89), (8.97, 0.89),
+        (0.35, 3.88), (4.66, 3.88),
+    ]
+
+    def rgb(hex_color):
+        value = hex_color.lstrip("#")
+        return RGBColor(*(int(value[index:index + 2], 16) for index in (0, 2, 4)))
+
+    for (column, label, higher, explanation), (left, top), title_position in zip(
+        METRICS, positions, title_positions
+    ):
+        arrow = "↑" if higher else "↓"
+        title_box = add_textbox(
+            slide, title_position[0], title_position[1], 4.0, 0.38,
+            f"{label} {arrow}  ·  {explanation}", 10.5, (23, 33, 43), True,
+        )
+        title_box.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+
+        chart_data = ChartData()
+        chart_data.categories = ["5", "10", "15", "20", "25 Baseline"]
+        for method in METHODS:
+            selected = improvements[improvements["method"] == method].sort_values(
+                "budget"
+            )
+            chart_data.add_series(method, [*selected[column].tolist(), None])
+        chart_data.add_series("Baseline-25", [None, None, None, None, 0.0])
+
+        chart = slide.shapes.add_chart(
+            XL_CHART_TYPE.LINE_MARKERS,
+            Inches(left), Inches(top), Inches(4.0), Inches(2.44), chart_data,
+        ).chart
+        chart.chart_style = 10
+        chart.has_legend = False
+        chart.has_title = False
+        chart.value_axis.minimum_scale = -bound
+        chart.value_axis.maximum_scale = bound
+        chart.value_axis.major_unit = max(1.0, bound / 2)
+        chart.value_axis.has_major_gridlines = True
+        chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(216, 224, 232)
+        chart.value_axis.tick_labels.number_format = '0.0"%"'
+        chart.value_axis.tick_labels.font.name = "Arial"
+        chart.value_axis.tick_labels.font.size = Pt(8)
+        chart.category_axis.tick_labels.font.name = "Arial"
+        chart.category_axis.tick_labels.font.size = Pt(8)
+
+        chart_series = list(chart.series)
+        for series, method in zip(chart_series[:-1], METHODS):
+            color = rgb(COLORS[method])
+            series.format.line.color.rgb = color
+            series.format.line.width = Pt(2)
+            series.marker.style = XL_MARKER_STYLE.CIRCLE
+            series.marker.size = 6
+            series.marker.format.fill.solid()
+            series.marker.format.fill.fore_color.rgb = color
+            series.marker.format.line.color.rgb = color
+
+        baseline_series = chart_series[-1]
+        baseline_series.format.line.color.rgb = RGBColor(245, 196, 81)
+        baseline_series.marker.style = XL_MARKER_STYLE.STAR
+        baseline_series.marker.size = 11
+        baseline_series.marker.format.fill.solid()
+        baseline_series.marker.format.fill.fore_color.rgb = RGBColor(245, 196, 81)
+        baseline_series.marker.format.line.color.rgb = RGBColor(185, 137, 24)
+
+    guide_left, guide_top = 9.05, 4.20
+    add_textbox(slide, guide_left, guide_top, 3.7, 0.35, "HOW TO READ", 12, (36, 141, 184), True)
+    add_textbox(
+        slide, guide_left, guide_top + 0.42, 3.75, 0.9,
+        "0% = original TRIPLEX with 25 patches\nAbove 0 = better than Baseline-25\nBelow 0 = worse than Baseline-25",
+        10, (23, 33, 43),
+    )
+    for index, method in enumerate(METHODS):
+        row, column = divmod(index, 2)
+        x = guide_left + column * 1.82
+        y = guide_top + 1.52 + row * 0.42
+        marker = slide.shapes.add_shape(
+            MSO_SHAPE.OVAL, Inches(x), Inches(y + 0.04), Inches(0.12), Inches(0.12)
+        )
+        marker.fill.solid()
+        marker.fill.fore_color.rgb = rgb(COLORS[method])
+        marker.line.color.rgb = rgb(COLORS[method])
+        add_textbox(slide, x + 0.17, y - 0.02, 1.55, 0.25, method, 9.5, (23, 33, 43))
+    add_textbox(
+        slide, guide_left, guide_top + 2.47, 3.8, 0.55,
+        "K includes the central target patch.\nMeans across 8 patient-level folds.",
+        9.5, (82, 98, 115),
+    )
+
+    output = OUTPUT_DIR / "01_patch_budget_trends.pptx"
     presentation.save(output)
     return output
 
@@ -439,10 +546,10 @@ def main():
     heatmap_png, _ = plot_heatmap(improvements)
     scorecard_png, _ = plot_k5_scorecard(improvements)
     best_png, _ = plot_best_settings(data, improvements, baseline)
-    standalone_trends = build_single_image_powerpoint(trend_png)
+    editable_trends = build_editable_trends_powerpoint(improvements)
     powerpoint = build_powerpoint([trend_png, heatmap_png, scorecard_png, best_png])
     notes = write_notes(data, improvements, baseline)
-    print(standalone_trends)
+    print(editable_trends)
     print(powerpoint)
     print(notes)
 
