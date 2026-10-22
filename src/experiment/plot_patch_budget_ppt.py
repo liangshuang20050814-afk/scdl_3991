@@ -379,6 +379,22 @@ def build_powerpoint(images):
     return output
 
 
+def build_single_image_powerpoint(image_path, output_name="01_patch_budget_trends.pptx"):
+    """Place one 16:9 figure on a matching single-slide PowerPoint deck."""
+    presentation = Presentation()
+    presentation.slide_width = Inches(13.333)
+    presentation.slide_height = Inches(7.5)
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    slide.shapes.add_picture(
+        str(image_path), 0, 0,
+        width=presentation.slide_width,
+        height=presentation.slide_height,
+    )
+    output = OUTPUT_DIR / output_name
+    presentation.save(output)
+    return output
+
+
 def write_notes(data, improvements, baseline):
     best_lines = []
     for column, label, higher, _ in METRICS:
@@ -423,8 +439,10 @@ def main():
     heatmap_png, _ = plot_heatmap(improvements)
     scorecard_png, _ = plot_k5_scorecard(improvements)
     best_png, _ = plot_best_settings(data, improvements, baseline)
+    standalone_trends = build_single_image_powerpoint(trend_png)
     powerpoint = build_powerpoint([trend_png, heatmap_png, scorecard_png, best_png])
     notes = write_notes(data, improvements, baseline)
+    print(standalone_trends)
     print(powerpoint)
     print(notes)
 
