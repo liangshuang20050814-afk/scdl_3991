@@ -17,6 +17,12 @@ METRICS = [
     "test_MeanAbsoluteError",
     "test_ExplainedVariance",
 ]
+PLOT_METRICS = [
+    "test_PearsonCorrCoef",
+    "test_ConcordanceCorrCoef",
+    "test_MeanSquaredError",
+    "test_MeanAbsoluteError",
+]
 NAMES = {
     "test_PearsonCorrCoef": "PCC",
     "test_ConcordanceCorrCoef": "CCC",
@@ -126,9 +132,9 @@ def main():
     wide.to_csv(output_dir / "method_summary_wide.csv", index=False)
     paired.to_csv(output_dir / "paired_summary_vs_baseline.csv", index=False)
 
-    fig, axes = plt.subplots(2, 3, figsize=(17, 9))
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     axes = axes.ravel()
-    for axis, metric in zip(axes, METRICS):
+    for axis, metric in zip(axes, PLOT_METRICS):
         means = [
             summary.loc[
                 (summary["method"] == method) & (summary["metric"] == metric),
@@ -148,7 +154,6 @@ def main():
         arrow = "↓" if metric in LOWER_IS_BETTER else "↑"
         axis.set_title(f"{NAMES[metric]} {arrow}")
         axis.grid(axis="y", alpha=0.25)
-    axes[-1].remove()
     fig.suptitle(
         f"All neighbor-selection methods ({args.expected_folds} patient folds)"
     )

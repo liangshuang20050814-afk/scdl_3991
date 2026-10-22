@@ -61,6 +61,28 @@ def get_parse():
             'May be a file, directory, glob, or contain {fold}.'
         ),
     )
+    parser.add_argument(
+        '--compact_neighbor_tokens',
+        action='store_true',
+        help=(
+            'Gather selected neighbor tokens before the neighbor and fusion '
+            'encoders instead of retaining the original 25-token tensor.'
+        ),
+    )
+    parser.add_argument(
+        '--neighbor_compact_dir',
+        type=str,
+        default=None,
+        help=(
+            'Directory containing physically compact neighbor HDF5 files. '
+            'Each file must include embeddings, mask_tb, and token_indices.'
+        ),
+    )
+    parser.add_argument(
+        '--no_save_predictions',
+        action='store_true',
+        help='Compute evaluation metrics without writing per-slide predictions.',
+    )
 
     args = parser.parse_args()
     
@@ -193,6 +215,12 @@ if __name__ == '__main__':
         cfg.DATA.selection_seed = args.selection_seed
     if args.selector_ckpt_path is not None:
         cfg.MODEL.selector_ckpt_path = args.selector_ckpt_path
+    if args.compact_neighbor_tokens:
+        cfg.MODEL.compact_neighbor_tokens = True
+    if args.neighbor_compact_dir is not None:
+        cfg.DATA.neighbor_compact_dir = args.neighbor_compact_dir
+    if args.no_save_predictions:
+        cfg.GENERAL.save_predictions = False
         
     log_path = cfg.GENERAL.log_path
     Path(log_path).mkdir(exist_ok=True, parents=True)
@@ -222,6 +250,12 @@ if __name__ == '__main__':
             cfg.DATA.selection_seed = args.selection_seed
         if args.selector_ckpt_path is not None:
             cfg.MODEL.selector_ckpt_path = args.selector_ckpt_path
+        if args.compact_neighbor_tokens:
+            cfg.MODEL.compact_neighbor_tokens = True
+        if args.neighbor_compact_dir is not None:
+            cfg.DATA.neighbor_compact_dir = args.neighbor_compact_dir
+        if args.no_save_predictions:
+            cfg.GENERAL.save_predictions = False
         cfg.GENERAL.timestamp = timestamp
         
     cfg.config = args.config_name

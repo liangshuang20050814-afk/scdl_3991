@@ -43,7 +43,8 @@ class TriDataset(STDataset):
                 model_name: str = 'uni_v1',
                 neighbor_selection: str = 'all',
                 num_selected_patches: int = 20,
-                selection_seed: int = 2021
+                selection_seed: int = 2021,
+                neighbor_compact_dir: str = None,
                 ):
         super(TriDataset, self).__init__(
                                 mode=mode,
@@ -85,6 +86,7 @@ class TriDataset(STDataset):
         self.neighbor_selection = neighbor_selection
         self.num_selected_patches = num_selected_patches
         self.selection_seed = selection_seed
+        self.neighbor_compact_dir = neighbor_compact_dir
         
         if phase == 'train':
             
@@ -114,8 +116,11 @@ class TriDataset(STDataset):
             img = self.load_img(name, idx)
             img = self.transforms(img)
             
-            neighbor_emb, mask = self.load_emb(name, emb_name='neighbor', idx=idx)
-            mask = self.select_neighbor_mask(neighbor_emb, mask, name, idx)
+            neighbor_result = self.load_emb(name, emb_name='neighbor', idx=idx)
+            neighbor_emb, mask = neighbor_result[:2]
+            token_indices = neighbor_result[2] if len(neighbor_result) == 3 else None
+            if token_indices is None:
+                mask = self.select_neighbor_mask(neighbor_emb, mask, name, idx)
             adata = self.adata_dict[name]
             expression = adata[idx].X
             expression = expression.toarray().squeeze(0) \
@@ -127,6 +132,8 @@ class TriDataset(STDataset):
             if self.neighbor_selection in self.STATIC_SELECTION_METHODS:
                 data['neighbor_pool_mask'] = mask.clone()
             data['neighbor_emb'] = neighbor_emb
+            if token_indices is not None:
+                data['neighbor_token_indices'] = token_indices
             data['label'] = torch.FloatTensor(expression)
             data['pid'] = torch.LongTensor([i])
             data['sid'] = torch.LongTensor([idx])
@@ -135,13 +142,20 @@ class TriDataset(STDataset):
             if self.mode == 'inference':
                 img = self.img[index]
                 img = self.transforms(img)
-                neighbor_emb, mask = self.load_emb(self.name, emb_name='neighbor', idx=index)
-                mask = self.select_neighbor_mask(
-                    neighbor_emb,
-                    mask,
-                    self.name,
-                    index,
+                neighbor_result = self.load_emb(
+                    self.name, emb_name='neighbor', idx=index
                 )
+                neighbor_emb, mask = neighbor_result[:2]
+                token_indices = (
+                    neighbor_result[2] if len(neighbor_result) == 3 else None
+                )
+                if token_indices is None:
+                    mask = self.select_neighbor_mask(
+                        neighbor_emb,
+                        mask,
+                        self.name,
+                        index,
+                    )
                 # global_emb = self.load_emb(self.name, emb_name='global')
                 # pos = np.load(f"{self.data_dir}/pos/{self.name}.npy")
                 data['sid'] = torch.LongTensor([index])
@@ -150,13 +164,18 @@ class TriDataset(STDataset):
                 img = self.load_img(name)
                 img = torch.stack([self.transforms(im) for im in img], dim=0)
                 
-                neighbor_emb, mask = self.load_emb(name, emb_name='neighbor')
-                mask = self.select_neighbor_mask(
-                    neighbor_emb,
-                    mask,
-                    name,
-                    torch.arange(mask.shape[0]),
+                neighbor_result = self.load_emb(name, emb_name='neighbor')
+                neighbor_emb, mask = neighbor_result[:2]
+                token_indices = (
+                    neighbor_result[2] if len(neighbor_result) == 3 else None
                 )
+                if token_indices is None:
+                    mask = self.select_neighbor_mask(
+                        neighbor_emb,
+                        mask,
+                        name,
+                        torch.arange(mask.shape[0]),
+                    )
                 global_emb, pos = self.load_emb(name, emb_name='global', return_crds=True)
             
                 if os.path.isfile(f"{self.st_dir}/{name}.h5ad"):
@@ -174,6 +193,8 @@ class TriDataset(STDataset):
             if self.neighbor_selection in self.STATIC_SELECTION_METHODS:
                 data['neighbor_pool_mask'] = mask.clone()
             data['neighbor_emb'] = neighbor_emb
+            if token_indices is not None:
+                data['neighbor_token_indices'] = token_indices
             
         return data
 
@@ -387,7 +408,11 @@ class TriDataset(STDataset):
         if model_name is None:
             model_name = self.model_name
         
-        path = f"{self.emb_dir}/{emb_name}/{model_name}/{name}.h5"
+        compact_dir = getattr(self, 'neighbor_compact_dir', None)
+        if emb_name == 'neighbor' and compact_dir:
+            path = f"{compact_dir}/{name}.h5"
+        else:
+            path = f"{self.emb_dir}/{emb_name}/{model_name}/{name}.h5"
         
         with h5py.File(path, 'r') as f:
             if 'embeddings'in f:
@@ -400,6 +425,14 @@ class TriDataset(STDataset):
             if emb_name == 'neighbor':
                 mask = f['mask_tb'][idx] if idx is not None else f['mask_tb'][:]
                 mask = torch.LongTensor(mask)
+                if 'token_indices' in f:
+                    token_indices = (
+                        f['token_indices'][idx]
+                        if idx is not None
+                        else f['token_indices'][:]
+                    )
+                    token_indices = torch.LongTensor(token_indices)
+                    return emb, mask, token_indices
                 # return emb, mask
                 if return_crds:
                     coords = f['coords'][idx] if idx is not None else f['coords'][:]

@@ -1,0 +1,2 @@
+config,timestamp,fold,batch_size,level1_tokens,level2_tokens,max_abs_logit_difference,mean_abs_logit_difference,allclose_atol_1e-5
+ST/andersson/TRIPLEX_similarity5,2026-10-20-20-17,0,128,25,5,0.0,0.0,True

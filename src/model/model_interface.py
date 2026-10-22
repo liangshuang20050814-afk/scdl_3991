@@ -85,6 +85,13 @@ class  ModelInterface(pl.LightningModule):
             inputs['neighbor_pool_mask'] = inputs['neighbor_pool_mask'].squeeze(0)
         if 'neighbor_emb' in inputs and len(inputs['neighbor_emb'].shape) == 4:
             inputs['neighbor_emb'] = inputs['neighbor_emb'].squeeze(0)
+        if (
+            'neighbor_token_indices' in inputs
+            and len(inputs['neighbor_token_indices'].shape) == 3
+        ):
+            inputs['neighbor_token_indices'] = inputs[
+                'neighbor_token_indices'
+            ].squeeze(0)
         if 'position' in inputs and len(inputs['position'].shape) == 3:
             inputs['position'] = inputs['position'].squeeze(0)
         if 'pid' in inputs and len(inputs['pid'].shape) == 2:

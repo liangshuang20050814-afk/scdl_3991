@@ -172,10 +172,14 @@ def main():
     paired.to_csv(output_dir / 'paired_differences_vs_baseline.csv', index=False)
     paired_summary.to_csv(output_dir / 'paired_summary_vs_baseline.csv', index=False)
 
-    figure, axes = plt.subplots(2, 3, figsize=(15, 8))
+    plot_metrics = [
+        metric for metric in metrics
+        if metric != 'test_ExplainedVariance'
+    ]
+    figure, axes = plt.subplots(2, 2, figsize=(14, 9))
     axes = axes.ravel()
     colors = ['#4c78a8', '#e45756', '#f2cf5b', '#54a24b']
-    for axis, metric in zip(axes, metrics):
+    for axis, metric in zip(axes, plot_metrics):
         for position, (method, color) in enumerate(zip(method_order, colors)):
             values = fold_metrics.loc[fold_metrics['method'] == method, metric]
             axis.scatter(np.full(len(values), position), values, color=color, zorder=2)
@@ -187,7 +191,7 @@ def main():
         axis.set_title(f'{friendly(metric)} {arrow}')
         axis.set_xticks(range(len(method_order)), method_order, rotation=20)
         axis.grid(axis='y', alpha=0.25)
-    for axis in axes[len(metrics):]:
+    for axis in axes[len(plot_metrics):]:
         axis.remove()
     figure.suptitle(
         f'Static neighbor selection comparison ({args.expected_folds} patient folds)'

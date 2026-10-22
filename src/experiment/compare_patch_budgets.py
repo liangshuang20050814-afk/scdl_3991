@@ -7,6 +7,7 @@ import re
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 
@@ -16,6 +17,12 @@ METRICS = [
     "test_MeanSquaredError",
     "test_MeanAbsoluteError",
     "test_ExplainedVariance",
+]
+PLOT_METRICS = [
+    "test_PearsonCorrCoef",
+    "test_ConcordanceCorrCoef",
+    "test_MeanSquaredError",
+    "test_MeanAbsoluteError",
 ]
 NAMES = {
     "test_PearsonCorrCoef": "PCC",
@@ -143,21 +150,31 @@ def main():
     summary.to_csv(output_dir / "budget_summary.csv", index=False)
     paired.to_csv(output_dir / "paired_summary_vs_baseline.csv", index=False)
 
-    fig, axes = plt.subplots(2, 3, figsize=(17, 9))
+    # Mean-only grouped bars use a locally scaled y-axis so that the small
+    # method/budget differences remain visible. Patient variation is shown
+    # separately in the fold-trajectory figure instead of as oversized SD
+    # bars on this overview.
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     axes = axes.ravel()
     baseline_summary = summary[summary["method"] == "Baseline"].iloc[0]
-    for axis, metric in zip(axes, METRICS):
-        for method in METHOD_ORDER:
+    budgets = np.array([5, 10, 15, 20])
+    width = 0.9
+    colors = ["#4c78a8", "#f58518", "#54a24b", "#e45756"]
+    for axis, metric in zip(axes, PLOT_METRICS):
+        plotted_values = [baseline_summary[f"{metric}_mean"]]
+        for method_index, (method, color) in enumerate(zip(METHOD_ORDER, colors)):
             data = summary[summary["method"] == method].sort_values("budget")
             if data.empty:
                 continue
-            axis.errorbar(
-                data["budget"],
-                data[f"{metric}_mean"],
-                yerr=data[f"{metric}_std"],
-                marker="o",
-                capsize=3,
+            values = data[f"{metric}_mean"].to_numpy()
+            plotted_values.extend(values)
+            axis.bar(
+                budgets + (method_index - 1.5) * width,
+                values,
+                width=width,
+                color=color,
                 label=method,
+                alpha=0.9,
             )
         axis.axhline(
             baseline_summary[f"{metric}_mean"],
@@ -166,43 +183,76 @@ def main():
             linewidth=1.2,
             label="Baseline-25",
         )
-        axis.set_xticks([5, 10, 15, 20])
+        axis.set_xticks(budgets)
         axis.set_xlabel("Patch budget K (includes center target)")
         arrow = "↓" if metric in LOWER_IS_BETTER else "↑"
         axis.set_title(f"{NAMES[metric]} {arrow}")
-        axis.grid(alpha=0.25)
-    axes[0].legend(fontsize=8)
-    axes[-1].remove()
-    fig.suptitle(f"BC1 patch-budget comparison ({args.expected_folds} folds)")
-    fig.tight_layout()
+        value_range = max(plotted_values) - min(plotted_values)
+        padding = max(value_range * 0.25, abs(np.mean(plotted_values)) * 0.003)
+        axis.set_ylim(min(plotted_values) - padding, max(plotted_values) + padding)
+        axis.grid(axis="y", alpha=0.25)
+    axes[0].legend(fontsize=9, ncol=2)
+    fig.suptitle(
+        f"BC1 patch-budget mean comparison ({args.expected_folds} patient folds)"
+    )
+    fig.text(
+        0.5, 0.01,
+        "Bars show fold means; patient-fold variability is shown in the trajectory figure.",
+        ha="center", fontsize=10, color="#4b5563",
+    )
+    fig.tight_layout(rect=[0, 0.045, 1, 0.97])
     fig.savefig(output_dir / "budget_curves.png", dpi=220, bbox_inches="tight")
     plt.close(fig)
 
-    fig, axes = plt.subplots(2, 3, figsize=(17, 9))
-    axes = axes.ravel()
-    for axis, metric in zip(axes, METRICS):
-        metric_data = paired[paired["metric"] == metric]
-        for method in METHOD_ORDER:
-            data = metric_data[metric_data["method"] == method].sort_values(
-                "budget"
+    # Heatmap colors are normalized within each metric because PCC/CCC and
+    # error metrics have different numerical scales. Cell text remains the
+    # unscaled paired improvement, with positive values always meaning better.
+    combinations = [
+        (method, budget)
+        for method in METHOD_ORDER
+        for budget in (5, 10, 15, 20)
+    ]
+    raw_improvements = np.array([
+        [
+            paired.loc[
+                (paired["method"] == method)
+                & (paired["budget"] == budget)
+                & (paired["metric"] == metric),
+                "mean_improvement",
+            ].iloc[0]
+            for metric in PLOT_METRICS
+        ]
+        for method, budget in combinations
+    ])
+    scale = np.max(np.abs(raw_improvements), axis=0)
+    scale[scale == 0] = 1.0
+    normalized = raw_improvements / scale
+
+    fig, axis = plt.subplots(figsize=(11, 10))
+    image = axis.imshow(normalized, cmap="RdYlGn", vmin=-1, vmax=1, aspect="auto")
+    axis.set_xticks(
+        range(len(PLOT_METRICS)),
+        [f"{NAMES[metric]} {'↓' if metric in LOWER_IS_BETTER else '↑'}" for metric in PLOT_METRICS],
+    )
+    axis.set_yticks(
+        range(len(combinations)),
+        [f"{method} · K={budget}" for method, budget in combinations],
+    )
+    for row_index in range(raw_improvements.shape[0]):
+        for column_index in range(raw_improvements.shape[1]):
+            value = raw_improvements[row_index, column_index]
+            axis.text(
+                column_index, row_index, f"{value:+.4f}",
+                ha="center", va="center", fontsize=9,
+                color="white" if abs(normalized[row_index, column_index]) > 0.62 else "#111827",
+                fontweight="bold" if value > 0 else "normal",
             )
-            axis.errorbar(
-                data["budget"],
-                data["mean_improvement"],
-                yerr=data["std_improvement_across_folds"],
-                marker="o",
-                capsize=3,
-                label=method,
-            )
-        axis.axhline(0.0, color="black", linestyle="--", linewidth=1.2)
-        axis.set_xticks([5, 10, 15, 20])
-        axis.set_xlabel("Patch budget K (includes center target)")
-        axis.set_title(f"{NAMES[metric]} improvement vs Baseline-25")
-        axis.set_ylabel("Positive means better than Baseline")
-        axis.grid(alpha=0.25)
-    axes[0].legend(fontsize=8)
-    axes[-1].remove()
-    fig.suptitle("Mean paired improvement relative to original TRIPLEX")
+    for boundary in (3.5, 7.5, 11.5):
+        axis.axhline(boundary, color="white", linewidth=2.5)
+    colorbar = fig.colorbar(image, ax=axis, shrink=0.82)
+    colorbar.set_label("Column-normalized improvement (green = better)")
+    axis.set_title("Mean paired improvement relative to Baseline-25", pad=14)
+    axis.set_xlabel("Metric (cell values are unscaled improvements)")
     fig.tight_layout()
     fig.savefig(
         output_dir / "delta_vs_baseline.png", dpi=220, bbox_inches="tight"

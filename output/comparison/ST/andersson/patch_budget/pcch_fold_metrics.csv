@@ -1,0 +1,137 @@
+method,budget,run_id,fold,test_PearsonCorrCoef_hpg
+Baseline,25,baseline,0,0.3553241789340973
+Baseline,25,baseline,1,0.4525728225708008
+Baseline,25,baseline,2,0.6087635159492493
+Baseline,25,baseline,3,0.2713874578475952
+Baseline,25,baseline,4,0.5486676096916199
+Baseline,25,baseline,5,0.4120082855224609
+Baseline,25,baseline,6,0.1812915802001953
+Baseline,25,baseline,7,0.1638150066137313
+Diversity,5,diversity_k5,0,0.3644736111164093
+Diversity,5,diversity_k5,1,0.4551542699337005
+Diversity,5,diversity_k5,2,0.6032646894454956
+Diversity,5,diversity_k5,3,0.2709413468837738
+Diversity,5,diversity_k5,4,0.5525031089782715
+Diversity,5,diversity_k5,5,0.4172554612159729
+Diversity,5,diversity_k5,6,0.1906081736087799
+Diversity,5,diversity_k5,7,0.1699027121067047
+Diversity,10,diversity_k10,0,0.3669543862342834
+Diversity,10,diversity_k10,1,0.42376509308815
+Diversity,10,diversity_k10,2,0.6050249934196472
+Diversity,10,diversity_k10,3,0.2713847756385803
+Diversity,10,diversity_k10,4,0.550123929977417
+Diversity,10,diversity_k10,5,0.4293098449707031
+Diversity,10,diversity_k10,6,0.1871805340051651
+Diversity,10,diversity_k10,7,0.1814514547586441
+Diversity,15,diversity_k15,0,0.3676039576530456
+Diversity,15,diversity_k15,1,0.4383589029312134
+Diversity,15,diversity_k15,2,0.6060936450958252
+Diversity,15,diversity_k15,3,0.2716563642024994
+Diversity,15,diversity_k15,4,0.5494555830955505
+Diversity,15,diversity_k15,5,0.4093122184276581
+Diversity,15,diversity_k15,6,0.1865437179803848
+Diversity,15,diversity_k15,7,0.1739729642868042
+Diversity,20,diversity,0,0.3548989295959472
+Diversity,20,diversity,1,0.435465931892395
+Diversity,20,diversity,2,0.6033273339271545
+Diversity,20,diversity,3,0.2722015976905823
+Diversity,20,diversity,4,0.5469936728477478
+Diversity,20,diversity,5,0.4088929891586303
+Diversity,20,diversity,6,0.1862276941537857
+Diversity,20,diversity,7,0.1681707948446273
+Random,5,random_k5,0,0.3647055327892303
+Random,5,random_k5,1,0.4332314729690552
+Random,5,random_k5,2,0.610219419002533
+Random,5,random_k5,3,0.2724569737911224
+Random,5,random_k5,4,0.5524776577949524
+Random,5,random_k5,5,0.4212876260280609
+Random,5,random_k5,6,0.1895712912082672
+Random,5,random_k5,7,0.1540074050426483
+Random,10,random_k10,0,0.3655259013175964
+Random,10,random_k10,1,0.4089279770851135
+Random,10,random_k10,2,0.6113398671150208
+Random,10,random_k10,3,0.2725280225276947
+Random,10,random_k10,4,0.5515997409820557
+Random,10,random_k10,5,0.4229744076728821
+Random,10,random_k10,6,0.190996840596199
+Random,10,random_k10,7,0.1660933643579483
+Random,15,random_k15,0,0.3686312735080719
+Random,15,random_k15,1,0.4500056505203247
+Random,15,random_k15,2,0.6069244742393494
+Random,15,random_k15,3,0.2724583745002746
+Random,15,random_k15,4,0.5495795011520386
+Random,15,random_k15,5,0.4135268628597259
+Random,15,random_k15,6,0.186168298125267
+Random,15,random_k15,7,0.1796692162752151
+Random,20,random_seed_1,0,0.3562510311603546
+Random,20,random_seed_1,1,0.4534378349781036
+Random,20,random_seed_1,2,0.6073276400566101
+Random,20,random_seed_1,3,0.2712886929512024
+Random,20,random_seed_1,4,0.5491183400154114
+Random,20,random_seed_1,5,0.4136086404323578
+Random,20,random_seed_1,6,0.1828055530786514
+Random,20,random_seed_1,7,0.1736122369766235
+ST Hard,5,attention_st_k5,0,0.3941437602043152
+ST Hard,5,attention_st_k5,1,0.4291889071464538
+ST Hard,5,attention_st_k5,2,0.5986182689666748
+ST Hard,5,attention_st_k5,3,0.2798653542995453
+ST Hard,5,attention_st_k5,4,0.5485177040100098
+ST Hard,5,attention_st_k5,5,0.4323301315307617
+ST Hard,5,attention_st_k5,6,0.1613443046808242
+ST Hard,5,attention_st_k5,7,0.1925786584615707
+ST Hard,10,attention_st_k10,0,0.3695734739303589
+ST Hard,10,attention_st_k10,1,0.4390601813793182
+ST Hard,10,attention_st_k10,2,0.5910444259643555
+ST Hard,10,attention_st_k10,3,0.273501843214035
+ST Hard,10,attention_st_k10,4,0.5515968203544617
+ST Hard,10,attention_st_k10,5,0.4243422448635101
+ST Hard,10,attention_st_k10,6,0.1637874990701675
+ST Hard,10,attention_st_k10,7,0.2001816034317016
+ST Hard,15,attention_st_k15,0,0.369017481803894
+ST Hard,15,attention_st_k15,1,0.4474430978298187
+ST Hard,15,attention_st_k15,2,0.6103028059005737
+ST Hard,15,attention_st_k15,3,0.2735982239246368
+ST Hard,15,attention_st_k15,4,0.553935170173645
+ST Hard,15,attention_st_k15,5,0.4066715240478515
+ST Hard,15,attention_st_k15,6,0.1504087001085281
+ST Hard,15,attention_st_k15,7,0.1989297121763229
+ST Hard,20,attention_st20,0,0.3758247494697571
+ST Hard,20,attention_st20,1,0.4520999491214752
+ST Hard,20,attention_st20,2,0.612591564655304
+ST Hard,20,attention_st20,3,0.2667858302593231
+ST Hard,20,attention_st20,4,0.5534082651138306
+ST Hard,20,attention_st20,5,0.3789480626583099
+ST Hard,20,attention_st20,6,0.1643459200859069
+ST Hard,20,attention_st20,7,0.1643247902393341
+Similarity,5,similarity_k5,0,0.3629501461982727
+Similarity,5,similarity_k5,1,0.4555055499076843
+Similarity,5,similarity_k5,2,0.612174391746521
+Similarity,5,similarity_k5,3,0.2993033230304718
+Similarity,5,similarity_k5,4,0.5552895069122314
+Similarity,5,similarity_k5,5,0.4302191436290741
+Similarity,5,similarity_k5,6,0.1828187108039856
+Similarity,5,similarity_k5,7,0.1529256999492645
+Similarity,10,similarity_k10,0,0.3609172999858856
+Similarity,10,similarity_k10,1,0.4231825768947601
+Similarity,10,similarity_k10,2,0.6130806803703308
+Similarity,10,similarity_k10,3,0.2750056087970733
+Similarity,10,similarity_k10,4,0.5544741153717041
+Similarity,10,similarity_k10,5,0.4149545431137085
+Similarity,10,similarity_k10,6,0.1841988265514373
+Similarity,10,similarity_k10,7,0.1479932814836502
+Similarity,15,similarity_k15,0,0.3685105144977569
+Similarity,15,similarity_k15,1,0.4452662467956543
+Similarity,15,similarity_k15,2,0.6137760281562805
+Similarity,15,similarity_k15,3,0.2740451693534851
+Similarity,15,similarity_k15,4,0.5542416572570801
+Similarity,15,similarity_k15,5,0.415283054113388
+Similarity,15,similarity_k15,6,0.1811093091964721
+Similarity,15,similarity_k15,7,0.1335256993770599
+Similarity,20,similarity,0,0.367631584405899
+Similarity,20,similarity,1,0.4466989934444427
+Similarity,20,similarity,2,0.610446572303772
+Similarity,20,similarity,3,0.2753471136093139
+Similarity,20,similarity,4,0.5507954955101013
+Similarity,20,similarity,5,0.404887855052948
+Similarity,20,similarity,6,0.1732711344957351
+Similarity,20,similarity,7,0.1411599814891815

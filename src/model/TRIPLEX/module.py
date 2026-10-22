@@ -92,7 +92,13 @@ class MultiHeadAttention(nn.Module):
             else:
                 self.ab = self.attention_biases[:, self.attention_bias_idxs]
         
-    def forward(self, x, mask = None, gate=None, return_attn=False):
+    def forward(
+            self,
+            x,
+            mask=None,
+            gate=None,
+            return_attn=False,
+            token_indices=None):
         if gate is not None and self.flash_attn:
             raise ValueError("Selector gates are not supported by the flash-attention path.")
         
@@ -109,8 +115,36 @@ class MultiHeadAttention(nn.Module):
 
             qk = torch.matmul(q, k.transpose(-1, -2)) * self.scale 
             if self.attn_bias:
-                qk += (self.attention_biases[:, self.attention_bias_idxs]
-                if self.training else self.ab)
+                attention_bias = (
+                    self.attention_biases[:, self.attention_bias_idxs]
+                    if self.training else self.ab
+                )
+                if token_indices is not None:
+                    if token_indices.shape != x.shape[:2]:
+                        raise ValueError(
+                            "token_indices must match the batch and token "
+                            "dimensions of x"
+                        )
+                    batch_size, num_tokens = token_indices.shape
+                    num_original_tokens = attention_bias.shape[-1]
+                    expanded_bias = attention_bias.unsqueeze(0).expand(
+                        batch_size, -1, -1, -1
+                    )
+                    row_indices = token_indices[:, None, :, None].expand(
+                        batch_size,
+                        self.heads,
+                        num_tokens,
+                        num_original_tokens,
+                    )
+                    attention_bias = expanded_bias.gather(2, row_indices)
+                    column_indices = token_indices[:, None, None, :].expand(
+                        batch_size,
+                        self.heads,
+                        num_tokens,
+                        num_tokens,
+                    )
+                    attention_bias = attention_bias.gather(3, column_indices)
+                qk += attention_bias
             
             if mask is not None:
                 fill_value = torch.finfo(torch.float16).min
@@ -284,17 +318,32 @@ class TransformerEncoder(nn.Module):
                                                     resolution=resolution, flash_attn=flash_attn)),
                 PreNorm(emb_dim, FeedForward(emb_dim, mlp_dim, dropout = dropout))
             ]))
-    def forward(self, x, mask=None, gate=None, return_attn=False):
+    def forward(
+            self,
+            x,
+            mask=None,
+            gate=None,
+            return_attn=False,
+            token_indices=None):
         for attn, ff in self.layers:
             if return_attn:
                 attn_out, attn_weights = attn(
-                    x, mask=mask, gate=gate, return_attn=return_attn
+                    x,
+                    mask=mask,
+                    gate=gate,
+                    return_attn=return_attn,
+                    token_indices=token_indices,
                 )
                 x += attn_out # residual connection after attention      
                 x = ff(x) + x # residual connection after feed forward net
                 
             else:
-                x = attn(x, mask=mask, gate=gate) + x # residual connection after attention
+                x = attn(
+                    x,
+                    mask=mask,
+                    gate=gate,
+                    token_indices=token_indices,
+                ) + x # residual connection after attention
                 x = ff(x) + x # residual connection after feed forward net
             
         if return_attn:
@@ -550,7 +599,7 @@ class NeighborEncoder(nn.Module):
         self.layer = TransformerEncoder(emb_dim, depth, heads, mlp_dim, dropout, attn_bias=True, resolution=resolution)
         self.norm = nn.LayerNorm(emb_dim)
 
-    def forward(self, x, mask=None, gate=None):
+    def forward(self, x, mask=None, gate=None, token_indices=None):
         
         if mask != None:
             mask = mask.unsqueeze(1).unsqueeze(1)
@@ -558,7 +607,12 @@ class NeighborEncoder(nn.Module):
             gate = gate.unsqueeze(1).unsqueeze(1)
             
         # Translayer
-        x = self.layer(x, mask=mask, gate=gate) #[B, N, 512]
+        x = self.layer(
+            x,
+            mask=mask,
+            gate=gate,
+            token_indices=token_indices,
+        ) #[B, N, 512]
         x = self.norm(x)
         
         return x

@@ -93,7 +93,8 @@ class TRIPLEX(nn.Module):
                 selector_similarity_prior_weight=1.0,
                 selector_learned_score_weight=1.0,
                 num_selected_patches=20,
-                selector_ckpt_path=None):
+                selector_ckpt_path=None,
+                compact_neighbor_tokens=False):
         """TRIPLEX model 
 
         Args:
@@ -123,6 +124,7 @@ class TRIPLEX(nn.Module):
         self.max_batch_size = max_batch_size
         self.selector_mode = selector_mode
         self.selector_budget_loss_weight = selector_budget_loss_weight
+        self.compact_neighbor_tokens = compact_neighbor_tokens
 
         valid_selector_modes = {
             'none', 'soft', 'straight_through', 'frozen_hard'
@@ -198,6 +200,7 @@ class TRIPLEX(nn.Module):
                 pid=None, 
                 sid=None, 
                 neighbor_pool_mask=None,
+                neighbor_token_indices=None,
                 **kwargs):
         
         if 'dataset' in kwargs:
@@ -211,10 +214,19 @@ class TRIPLEX(nn.Module):
                 kwargs['dataset'],
                 kwargs['label'],
                 neighbor_pool_mask,
+                neighbor_token_indices,
             )
         else:
             # Inference 
-            return self._process_inference_batch(img, mask, neighbor_emb, position, global_emb, sid)
+            return self._process_inference_batch(
+                img,
+                mask,
+                neighbor_emb,
+                position,
+                global_emb,
+                sid,
+                neighbor_token_indices,
+            )
             
     def _process_training_batch(
             self,
@@ -225,7 +237,8 @@ class TRIPLEX(nn.Module):
             sid,
             dataset,
             label,
-            neighbor_pool_mask=None):
+            neighbor_pool_mask=None,
+            neighbor_token_indices=None):
         global_emb, position = self.retrieve_global_emb(pid, dataset)
         
         (
@@ -244,6 +257,7 @@ class TRIPLEX(nn.Module):
             pid,
             sid,
             neighbor_pool_mask,
+            neighbor_token_indices,
         )
         return self._get_outputs(
             fusion_token,
@@ -255,22 +269,50 @@ class TRIPLEX(nn.Module):
             selector_budget_loss,
         )
 
-    def _process_inference_batch(self, img, mask, neighbor_emb, position, global_emb, sid=None):
+    def _process_inference_batch(
+            self,
+            img,
+            mask,
+            neighbor_emb,
+            position,
+            global_emb,
+            sid=None,
+            neighbor_token_indices=None):
         if sid is None and img.shape[0] > self.max_batch_size:
             imgs = img.split(self.max_batch_size, dim=0)
             neighbor_embs = neighbor_emb.split(self.max_batch_size, dim=0)
             masks = mask.split(self.max_batch_size, dim=0)
+            token_index_batches = (
+                neighbor_token_indices.split(self.max_batch_size, dim=0)
+                if neighbor_token_indices is not None
+                else [None] * len(imgs)
+            )
             sid = torch.arange(img.shape[0]).to(img.device)
             sids = sid.split(self.max_batch_size, dim=0)
             
-            pred = [self.fc(self._encode_all(img, mask, neighbor_emb, position, global_emb, sid=sid)[0]) \
-                for img, neighbor_emb, mask, sid in zip(imgs, neighbor_embs, masks, sids)]
+            pred = [self.fc(self._encode_all(
+                img,
+                mask,
+                neighbor_emb,
+                position,
+                global_emb,
+                sid=sid,
+                neighbor_token_indices=token_indices,
+            )[0]) for img, neighbor_emb, mask, sid, token_indices in zip(
+                imgs, neighbor_embs, masks, sids, token_index_batches
+            )]
             pred = torch.clamp(torch.cat(pred, dim=0), 0) 
             
             return {'logits': pred}    
         else:
             fusion_token, _, _, _, _, _ = self._encode_all(
-                img, mask, neighbor_emb, position, global_emb, sid=sid
+                img,
+                mask,
+                neighbor_emb,
+                position,
+                global_emb,
+                sid=sid,
+                neighbor_token_indices=neighbor_token_indices,
             )
             pred = torch.clamp(self.fc(fusion_token), 0)
         return {'logits': pred}
@@ -284,7 +326,8 @@ class TRIPLEX(nn.Module):
             global_emb,
             pid=None,
             sid=None,
-            neighbor_pool_mask=None):
+            neighbor_pool_mask=None,
+            neighbor_token_indices=None):
         selector_gate = None
         selector_budget_loss = neighbor_emb.sum() * 0.0
         effective_pool_mask = neighbor_pool_mask
@@ -299,11 +342,32 @@ class TRIPLEX(nn.Module):
             selector_budget_loss = selector_result['budget_loss']
             effective_pool_mask = selector_gate
 
+        token_indices = neighbor_token_indices
+        if self.compact_neighbor_tokens and token_indices is None:
+            selection_mask = (
+                selector_result['selected_mask']
+                if self.neighbor_selector is not None
+                else mask.bool()
+            )
+            (
+                neighbor_emb,
+                mask,
+                selector_gate,
+                effective_pool_mask,
+                token_indices,
+            ) = self._compact_neighbor_tokens(
+                neighbor_emb,
+                selection_mask,
+                selector_gate,
+                effective_pool_mask,
+            )
+
         target_token = self.encode_target(img)
         neighbor_token = self.neighbor_encoder(
             neighbor_emb,
             mask,
             gate=selector_gate,
+            token_indices=token_indices,
         )
         global_token = self.encode_global(global_emb, position, pid, sid)
         
@@ -322,6 +386,77 @@ class TRIPLEX(nn.Module):
             global_token,
             effective_pool_mask,
             selector_budget_loss,
+        )
+
+    @staticmethod
+    def _compact_neighbor_tokens(
+            neighbor_emb,
+            selection_mask,
+            selector_gate=None,
+            pool_mask=None):
+        """Gather selected neighbors into a shorter padded token sequence.
+
+        Tokens retain their original 5x5-grid indices so the neighbor
+        encoder can gather the matching relative-position biases. Rows with
+        fewer valid tokens are padded to the largest selected count in the
+        batch and masked out.
+        """
+        if neighbor_emb.ndim != 3 or selection_mask.ndim != 2:
+            raise ValueError(
+                "neighbor_emb and selection_mask must have shapes [B,N,D] "
+                "and [B,N]"
+            )
+        if neighbor_emb.shape[:2] != selection_mask.shape:
+            raise ValueError(
+                "neighbor_emb and selection_mask must have matching batch "
+                "and token dimensions"
+            )
+
+        selected = selection_mask.bool()
+        counts = selected.sum(dim=1)
+        if torch.any(counts == 0):
+            raise ValueError("Every sample must retain at least one neighbor token")
+
+        batch_size, original_tokens, emb_dim = neighbor_emb.shape
+        compact_tokens = int(counts.max().item())
+        original_indices = torch.arange(
+            original_tokens, device=neighbor_emb.device
+        ).expand(batch_size, -1)
+        sentinel = original_tokens
+        sorted_indices = torch.where(
+            selected, original_indices, sentinel
+        ).sort(dim=1).values[:, :compact_tokens]
+        compact_mask = (
+            torch.arange(compact_tokens, device=neighbor_emb.device)[None, :]
+            < counts[:, None]
+        )
+
+        # Padding positions gather token zero but are excluded by compact_mask.
+        gather_indices = sorted_indices.masked_fill(~compact_mask, 0)
+        compact_emb = neighbor_emb.gather(
+            1,
+            gather_indices.unsqueeze(-1).expand(-1, -1, emb_dim),
+        )
+
+        compact_gate = None
+        if selector_gate is not None:
+            compact_gate = selector_gate.gather(1, gather_indices)
+            compact_gate = compact_gate * compact_mask.to(compact_gate.dtype)
+
+        compact_pool_mask = compact_mask
+        if pool_mask is not None:
+            compact_pool_mask = pool_mask.gather(1, gather_indices)
+            compact_pool_mask = (
+                compact_pool_mask
+                * compact_mask.to(compact_pool_mask.dtype)
+            )
+
+        return (
+            compact_emb,
+            compact_mask.to(selection_mask.dtype),
+            compact_gate,
+            compact_pool_mask,
+            gather_indices,
         )
     
     def encode_target(self, img):

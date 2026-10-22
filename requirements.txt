@@ -3,6 +3,7 @@ matplotlib
 numpy
 openslide-bin
 pandas
+python-pptx
 pyyaml
 wget
 wandb

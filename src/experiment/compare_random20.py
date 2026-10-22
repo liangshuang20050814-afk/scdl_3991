@@ -465,7 +465,7 @@ def main():
     plot_metric_overview(
         run_summary,
         method_summary,
-        metrics,
+        [metric for metric in metrics if metric != 'test_ExplainedVariance'],
         output_dir / 'metric_overview.png',
         args.title,
     )

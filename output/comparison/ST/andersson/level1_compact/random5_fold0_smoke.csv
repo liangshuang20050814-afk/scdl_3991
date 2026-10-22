@@ -1,0 +1,5 @@
+config,timestamp,fold,checkpoint,phase,implementation,budget,batch_size,repeat,milliseconds_per_step,spots_per_second,peak_allocated_mib,incremental_peak_mib
+ST/andersson/TRIPLEX_random5,2026-10-18-15-33,0,logs/ST/andersson/TRIPLEX_random5/2026-10-18-15-33/fold0/epoch=04-val_target=0.1872.ckpt,forward,mask,5,128,1,21.689376831054688,5901.506576100913,682.26123046875,479.447265625
+ST/andersson/TRIPLEX_random5,2026-10-18-15-33,0,logs/ST/andersson/TRIPLEX_random5/2026-10-18-15-33/fold0/epoch=04-val_target=0.1872.ckpt,training,mask,5,128,1,74.27430725097656,1723.3415529206038,1982.421875,1771.5986328125
+ST/andersson/TRIPLEX_random5,2026-10-18-15-33,0,logs/ST/andersson/TRIPLEX_random5/2026-10-18-15-33/fold0/epoch=04-val_target=0.1872.ckpt,forward,compact,5,128,1,21.046831130981445,6081.675631044566,690.525390625,480.71142578125
+ST/andersson/TRIPLEX_random5,2026-10-18-15-33,0,logs/ST/andersson/TRIPLEX_random5/2026-10-18-15-33/fold0/epoch=04-val_target=0.1872.ckpt,training,compact,5,128,1,72.33483123779297,1769.5486090126317,1848.595703125,1638.8974609375
